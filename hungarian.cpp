@@ -1,61 +1,100 @@
 #include "hungarian.hpp"
-#include <vector>
 #include <limits>
-#include <cassert>
+#include <queue>
 
 namespace assign {
 
 std::pair<std::vector<int>, long long>
 hungarian_min_sum(const std::vector<std::vector<long long>>& C_in) {
     const int n = (int)C_in.size();
-    assert(n > 0);
-    for (auto &row : C_in) assert((int)row.size() == n);
+    std::vector<std::vector<long long>> C = C_in;
 
-    const long long INF = std::numeric_limits<long long>::max()/4;
-
-    // Перейдемо на 1-based індексацію (класична форма алгоритму)
-    std::vector<std::vector<long long>> a(n+1, std::vector<long long>(n+1));
-    for (int i=1;i<=n;++i) for (int j=1;j<=n;++j) a[i][j] = C_in[i-1][j-1];
-
-    std::vector<long long> u(n+1,0), v(n+1,0);
-    std::vector<int> p(n+1,0), way(n+1,0);
-
-    for (int i=1; i<=n; ++i) {
-        p[0] = i;
-        std::vector<long long> minv(n+1, INF);
-        std::vector<char> used(n+1, false);
-        int j0 = 0;
-
-        do {
-            used[j0] = true;
-            int i0 = p[j0], j1 = 0;
-            long long delta = INF;
-            for (int j=1; j<=n; ++j) if (!used[j]) {
-                long long cur = a[i0][j] - u[i0] - v[j];
-                if (cur < minv[j]) { minv[j] = cur; way[j] = j0; }
-                if (minv[j] < delta) { delta = minv[j]; j1 = j; }
-            }
-            for (int j=0; j<=n; ++j) {
-                if (used[j]) { u[p[j]] += delta; v[j] -= delta; }
-                else          { minv[j] -= delta; }
-            }
-            j0 = j1;
-        } while (p[j0] != 0);
-
-        // Відновлення змін ланцюжком
-        do {
-            int j1 = way[j0];
-            p[j0] = p[j1];
-            j0 = j1;
-        } while (j0);
+    // Row reduction
+    for (int i = 0; i < n; ++i) {
+        long long mn = C[i][0];
+        for (int j = 1; j < n; ++j) if (C[i][j] < mn) mn = C[i][j];
+        for (int j = 0; j < n; ++j) C[i][j] -= mn;
     }
 
-    std::vector<int> match(n, -1);
-    for (int j=1; j<=n; ++j) if (p[j]) match[p[j]-1] = j-1;
+    // Column reduction
+    for (int j = 0; j < n; ++j) {
+        long long mn = C[0][j];
+        for (int i = 1; i < n; ++i) if (C[i][j] < mn) mn = C[i][j];
+        for (int i = 0; i < n; ++i) C[i][j] -= mn;
+    }
 
-    long long cost = 0;
-    for (int i=0;i<n;++i) cost += C_in[i][ match[i] ];
-    return {match, cost};
+    auto build_zero_graph = [&](std::vector<std::vector<int>>& adj){
+        adj.assign(n, {});
+        for (int i = 0; i < n; ++i)
+            for (int j = 0; j < n; ++j)
+                if (C[i][j] == 0) adj[i].push_back(j);
+    };
+
+    auto dfs = [&](auto&& self, int u,
+                   const std::vector<std::vector<int>>& adj,
+                   std::vector<int>& matchC,
+                   std::vector<char>& used) -> bool {
+        for (int v : adj[u]) if (!used[v]) {
+            used[v] = 1;
+            if (matchC[v] == -1 || self(self, matchC[v], adj, matchC, used)) {
+                matchC[v] = u;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    std::vector<std::vector<int>> adj;
+    std::vector<int> matchC(n, -1);      // col -> row
+    std::vector<int> matchR(n, -1);      // row -> col (result)
+
+    while (true) {
+        build_zero_graph(adj);
+        std::fill(matchC.begin(), matchC.end(), -1);
+
+        int msize = 0;
+        for (int i = 0; i < n; ++i) {
+            std::vector<char> used(n, 0);
+            if (dfs(dfs, i, adj, matchC, used)) ++msize;
+        }
+        if (msize == n) {
+            for (int j = 0; j < n; ++j) if (matchC[j] != -1) matchR[ matchC[j] ] = j;
+            long long cost = 0;
+            for (int i = 0; i < n; ++i) cost += C_in[i][ matchR[i] ];
+            return {matchR, cost};
+        }
+
+        // Minimum vertex(zero) cover
+        std::vector<char> visRow(n, 0), visCol(n, 0);
+        std::queue<int> q;
+        std::vector<int> matchRow(n, -1);
+        for (int j = 0; j < n; ++j) if (matchC[j] != -1) matchRow[ matchC[j] ] = j;
+        for (int i = 0; i < n; ++i) if (matchRow[i] == -1) { visRow[i] = 1; q.push(i); }
+
+        while (!q.empty()) {
+            int r = q.front(); q.pop();
+            for (int c : adj[r]) {
+                if (!visCol[c]) {
+                    visCol[c] = 1;
+                    if (matchC[c] != -1 && !visRow[ matchC[c] ]) {
+                        visRow[ matchC[c] ] = 1;
+                        q.push(matchC[c]);
+                    }
+                }
+            }
+        }
+
+        long long delta = std::numeric_limits<long long>::max();
+        for (int i = 0; i < n; ++i) if (visRow[i])
+            for (int j = 0; j < n; ++j) if (!visCol[j] && C[i][j] < delta)
+                delta = C[i][j];
+
+        for (int i = 0; i < n; ++i)
+            for (int j = 0; j < n; ++j) {
+                if (visRow[i] && !visCol[j]) C[i][j] -= delta;          // uncovered
+                else if (!visRow[i] && visCol[j]) C[i][j] += delta;     // crossed line
+            }
+    }
 }
 
-} // namespace assign
+}

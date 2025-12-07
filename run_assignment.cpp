@@ -1,9 +1,10 @@
 #include "hungarian.hpp"
-#include <bits/stdc++.h>
+#include <fstream>
+#include <iostream>
+#include <vector>
 using namespace std;
 
 int main() {
-    ios::sync_with_stdio(false); cin.tie(nullptr);
 
     // Формат: n, далі n рядків по n цілих
     int n; if(!(cin >> n)) return 1;
